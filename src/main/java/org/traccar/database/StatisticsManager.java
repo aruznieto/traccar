@@ -121,7 +121,7 @@ public class StatisticsManager {
             }
 
             String url = config.getString(Keys.SERVER_STATISTICS);
-            if (url != null) {
+            if (url != null && !url.isEmpty()) {
                 String time = DateUtil.formatDate(statistics.getCaptureTime());
 
                 Form form = new Form();
@@ -176,6 +176,10 @@ public class StatisticsManager {
             deviceProtocols.put(deviceId, protocol);
             deviceMessages.merge(deviceId, 1, Integer::sum);
         }
+    }
+
+    public synchronized int messageStoredCount() {
+        return messagesStored;
     }
 
     public synchronized int messageStoredCount(long deviceId) {

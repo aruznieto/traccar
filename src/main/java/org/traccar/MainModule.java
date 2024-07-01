@@ -66,17 +66,20 @@ import org.traccar.geocoder.MapmyIndiaGeocoder;
 import org.traccar.geocoder.NominatimGeocoder;
 import org.traccar.geocoder.OpenCageGeocoder;
 import org.traccar.geocoder.PositionStackGeocoder;
-import org.traccar.geocoder.TestGeocoder;
+import org.traccar.geocoder.PlusCodesGeocoder;
 import org.traccar.geocoder.TomTomGeocoder;
+import org.traccar.geocoder.GeocodeJsonGeocoder;
 import org.traccar.geolocation.GeolocationProvider;
 import org.traccar.geolocation.GoogleGeolocationProvider;
 import org.traccar.geolocation.OpenCellIdGeolocationProvider;
 import org.traccar.geolocation.UnwiredGeolocationProvider;
+import org.traccar.handler.CopyAttributesHandler;
+import org.traccar.handler.FilterHandler;
 import org.traccar.handler.GeocoderHandler;
 import org.traccar.handler.GeolocationHandler;
 import org.traccar.handler.SpeedLimitHandler;
+import org.traccar.handler.TimeHandler;
 import org.traccar.helper.ObjectMapperContextResolver;
-import org.traccar.helper.SanitizerModule;
 import org.traccar.helper.WebHelper;
 import org.traccar.mail.LogMailManager;
 import org.traccar.mail.MailManager;
@@ -129,11 +132,8 @@ public class MainModule extends AbstractModule {
 
     @Singleton
     @Provides
-    public static ObjectMapper provideObjectMapper(Config config) {
+    public static ObjectMapper provideObjectMapper() {
         ObjectMapper objectMapper = new ObjectMapper();
-        if (config.getBoolean(Keys.WEB_SANITIZE)) {
-            objectMapper.registerModule(new SanitizerModule());
-        }
         objectMapper.registerModule(new JSONPModule());
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         return objectMapper;
@@ -188,7 +188,7 @@ public class MainModule extends AbstractModule {
 
     @Provides
     public static WebServer provideWebServer(Injector injector, Config config) {
-        if (config.hasKey(Keys.WEB_PORT)) {
+        if (config.getInteger(Keys.WEB_PORT) > 0) {
             return new WebServer(injector, config);
         }
         return null;
@@ -198,7 +198,7 @@ public class MainModule extends AbstractModule {
     @Provides
     public static Geocoder provideGeocoder(Config config, Client client, StatisticsManager statisticsManager) {
         if (config.getBoolean(Keys.GEOCODER_ENABLE)) {
-            String type = config.getString(Keys.GEOCODER_TYPE, "google");
+            String type = config.getString(Keys.GEOCODER_TYPE);
             String url = config.getString(Keys.GEOCODER_URL);
             String key = config.getString(Keys.GEOCODER_KEY);
             String language = config.getString(Keys.GEOCODER_LANGUAGE);
@@ -208,8 +208,8 @@ public class MainModule extends AbstractModule {
             int cacheSize = config.getInteger(Keys.GEOCODER_CACHE_SIZE);
             Geocoder geocoder;
             switch (type) {
-                case "test":
-                    geocoder = new TestGeocoder();
+                case "pluscodes":
+                    geocoder = new PlusCodesGeocoder();
                     break;
                 case "nominatim":
                     geocoder = new NominatimGeocoder(client, url, key, language, cacheSize, addressFormat);
@@ -261,6 +261,9 @@ public class MainModule extends AbstractModule {
                     break;
                 case "geoapify":
                     geocoder = new GeoapifyGeocoder(client, key, language, cacheSize, addressFormat);
+                    break;
+                case "geocodejson":
+                    geocoder = new GeocodeJsonGeocoder(client, url, key, language, cacheSize, addressFormat);
                     break;
                 default:
                     geocoder = new GoogleGeocoder(client, key, language, cacheSize, addressFormat);
@@ -332,6 +335,34 @@ public class MainModule extends AbstractModule {
     public static SpeedLimitHandler provideSpeedLimitHandler(@Nullable SpeedLimitProvider speedLimitProvider) {
         if (speedLimitProvider != null) {
             return new SpeedLimitHandler(speedLimitProvider);
+        }
+        return null;
+    }
+
+    @Singleton
+    @Provides
+    public static CopyAttributesHandler provideCopyAttributesHandler(Config config, CacheManager cacheManager) {
+        if (config.getBoolean(Keys.PROCESSING_COPY_ATTRIBUTES_ENABLE)) {
+            return new CopyAttributesHandler(config, cacheManager);
+        }
+        return null;
+    }
+
+    @Singleton
+    @Provides
+    public static FilterHandler provideFilterHandler(
+            Config config, CacheManager cacheManager, Storage storage, StatisticsManager statisticsManager) {
+        if (config.getBoolean(Keys.FILTER_ENABLE)) {
+            return new FilterHandler(config, cacheManager, storage, statisticsManager);
+        }
+        return null;
+    }
+
+    @Singleton
+    @Provides
+    public static TimeHandler provideTimeHandler(Config config) {
+        if (config.hasKey(Keys.TIME_OVERRIDE)) {
+            return new TimeHandler(config);
         }
         return null;
     }
