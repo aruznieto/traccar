@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2022 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import java.net.MulticastSocket;
 import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class MulticastBroadcastService extends BaseBroadcastService {
 
@@ -44,10 +43,12 @@ public class MulticastBroadcastService extends BaseBroadcastService {
 
     private DatagramSocket publisherSocket;
 
-    private final ExecutorService service = Executors.newSingleThreadExecutor();
+    private final ExecutorService executorService;
     private final byte[] receiverBuffer = new byte[4096];
 
-    public MulticastBroadcastService(Config config, ObjectMapper objectMapper) throws IOException {
+    public MulticastBroadcastService(
+            Config config, ExecutorService executorService, ObjectMapper objectMapper) throws IOException {
+        this.executorService = executorService;
         this.objectMapper = objectMapper;
         port = config.getInteger(Keys.BROADCAST_PORT);
         String interfaceName = config.getString(Keys.BROADCAST_INTERFACE);
@@ -78,13 +79,11 @@ public class MulticastBroadcastService extends BaseBroadcastService {
 
     @Override
     public void start() throws IOException {
-        service.submit(receiver);
+        executorService.submit(receiver);
     }
 
     @Override
-    public void stop() {
-        service.shutdown();
-    }
+    public void stop() {}
 
     private final Runnable receiver = new Runnable() {
         @Override
@@ -93,12 +92,16 @@ public class MulticastBroadcastService extends BaseBroadcastService {
                 socket.setNetworkInterface(networkInterface);
                 socket.joinGroup(group, networkInterface);
                 publisherSocket = socket;
-                while (!service.isShutdown()) {
+                while (!executorService.isShutdown()) {
                     DatagramPacket packet = new DatagramPacket(receiverBuffer, receiverBuffer.length);
                     socket.receive(packet);
                     if (networkInterface.inetAddresses().noneMatch(a -> a.equals(packet.getAddress()))) {
-                        String data = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
-                        handleMessage(objectMapper.readValue(data, BroadcastMessage.class));
+                        try {
+                            String data = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
+                            handleMessage(objectMapper.readValue(data, BroadcastMessage.class));
+                        } catch (Exception e) {
+                            LOGGER.warn("Broadcast handleMessage failed", e);
+                        }
                     }
                 }
                 publisherSocket = null;

@@ -15,7 +15,6 @@
  */
 package org.traccar.reports;
 
-import jakarta.inject.Inject;
 import org.jxls.util.JxlsHelper;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
@@ -31,6 +30,7 @@ import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Request;
 
+import jakarta.inject.Inject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -62,7 +62,7 @@ public class DevicesReportProvider {
                 new Columns.All(),
                 new Condition.Permission(User.class, userId, Device.class))).stream()
                 .map(device -> new DeviceReportItem(device, positions.get(device.getId())))
-                .collect(Collectors.toUnmodifiableList());
+                .toList();
     }
 
     public void getExcel(OutputStream outputStream, long userId) throws StorageException, IOException {

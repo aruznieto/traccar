@@ -20,7 +20,7 @@ public class GeocoderTest {
     @Disabled
     @Test
     public void testGoogle() {
-        Geocoder geocoder = new GoogleGeocoder(client, null, null, 0, new AddressFormat());
+        Geocoder geocoder = new GoogleGeocoder(client, null, null, null, 0, new AddressFormat());
         String address = geocoder.getAddress(31.776797, 35.211489, null);
         assertEquals("1 Ibn Shaprut St, Jerusalem, Jerusalem District, IL", address);
     }
@@ -55,7 +55,7 @@ public class GeocoderTest {
     public void testGeocodeFarm() {
         Geocoder geocoder = new GeocodeFarmGeocoder(client, null, null, 0, new AddressFormat());
         String address = geocoder.getAddress(34.116302, -118.051519, null);
-        assertEquals("Estrella Avenue, Arcadia, California, United States", address);
+        assertEquals("604 Estrella Ave, Arcadia, CA, United States", address);
     }
 
     @Disabled
@@ -69,9 +69,9 @@ public class GeocoderTest {
     @Disabled
     @Test
     public void testBan() {
-        Geocoder geocoder = new BanGeocoder(client, 0, new AddressFormat("%f [%d], %c"));
+        Geocoder geocoder = new BanGeocoder(client, 0, new AddressFormat());
         String address = geocoder.getAddress(48.8575, 2.2944, null);
-        assertEquals("8 Avenue Gustave Eiffel 75007 Paris [75, Paris, Île-de-France], FR", address);
+        assertEquals("8 Avenue Gustave Eiffel, Paris, FR", address);
     }
 
     @Disabled
@@ -122,4 +122,43 @@ public class GeocoderTest {
         assertEquals("114 East 13th Street, New York, New York, US", address);
     }
 
+    @Disabled
+    @Test
+    public void testGeocodeJSON() {
+        Geocoder geocoder = new GeocodeJsonGeocoder(client, null, null, null, 0, new AddressFormat());
+        String address = geocoder.getAddress(40.7337807, -73.9974401, null);
+        assertEquals("35 West 9th Street, New York, New York, US", address);
+    }
+
+    @Disabled
+    @Test
+    public void testAutoNavi() {
+        Geocoder geocoder = new AutoNaviGeocoder(client, "", 0, new AddressFormat());
+        String address = geocoder.getAddress(22.944354, 113.375930, null);
+        assertEquals("沙墟一村 云山大街, 番禺区, 广东省, 中国", address);
+    }
+
+    @Disabled
+    @Test
+    public void testBaidu() {
+        Geocoder geocoder = new BaiduGeocoder(client, "", null, 0, new AddressFormat());
+        String address = geocoder.getAddress(22.944354, 113.375930, null);
+        assertEquals("东荟创新园 云山街, 广州市, 广东省, 中国", address);
+    }
+
+    @Disabled
+    @Test
+    public void testTencent() {
+        Geocoder geocoder = new TencentGeocoder(client, "", 0, new AddressFormat());
+        String address = geocoder.getAddress(22.944354, 113.375930, null);
+        assertEquals("东荟创新园 云山大街, 广州市, 广东省, 中国", address);
+    }
+
+    @Disabled
+    @Test
+    public void testMyGeocode() {
+        Geocoder geocoder = new MyGeocodeGeocoder(client, null, null, null, 0, new AddressFormat());
+        String address = geocoder.getAddress(40.733, -73.989, null);
+        assertEquals("118 E 13th St, New York, New York, US", address);
+    }
 }

@@ -15,8 +15,6 @@
  */
 package org.traccar.schedule;
 
-import jakarta.inject.Inject;
-import jakarta.mail.MessagingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.traccar.config.Config;
@@ -28,15 +26,15 @@ import org.traccar.model.Server;
 import org.traccar.model.User;
 import org.traccar.notification.TextTemplateFormatter;
 import org.traccar.storage.Storage;
-import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Request;
 
+import jakarta.inject.Inject;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-public class TaskExpirations implements ScheduleTask {
+public class TaskExpirations extends SingleScheduleTask {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(TaskExpirations.class);
 
@@ -70,24 +68,22 @@ public class TaskExpirations implements ScheduleTask {
         return false;
     }
 
-    private void sendUserExpiration(
-            Server server, User user, String template) throws MessagingException {
+    private void sendUserExpiration(Server server, User user, String template) throws Exception {
         var velocityContext = textTemplateFormatter.prepareContext(server, user);
         velocityContext.put("expiration", user.getExpirationTime());
-        var fullMessage = textTemplateFormatter.formatMessage(velocityContext, template, "full");
-        mailManager.sendMessage(user, true, fullMessage.getSubject(), fullMessage.getBody());
+        var fullMessage = textTemplateFormatter.formatMessage(velocityContext, template, false);
+        mailManager.sendMessage(user, true, fullMessage.subject(), fullMessage.body()).get();
     }
 
-    private void sendDeviceExpiration(
-            Server server, Device device, String template) throws MessagingException, StorageException {
+    private void sendDeviceExpiration(Server server, Device device, String template) throws Exception {
         var users = storage.getObjects(User.class, new Request(
                 new Columns.All(), new Condition.Permission(User.class, Device.class, device.getId())));
         for (User user : users) {
             var velocityContext = textTemplateFormatter.prepareContext(server, user);
             velocityContext.put("expiration", device.getExpirationTime());
             velocityContext.put("device", device);
-            var fullMessage = textTemplateFormatter.formatMessage(velocityContext, template, "full");
-            mailManager.sendMessage(user, true, fullMessage.getSubject(), fullMessage.getBody());
+            var fullMessage = textTemplateFormatter.formatMessage(velocityContext, template, false);
+            mailManager.sendMessage(user, true, fullMessage.subject(), fullMessage.body()).get();
         }
     }
 
@@ -111,7 +107,7 @@ public class TaskExpirations implements ScheduleTask {
             }
 
             if (config.getBoolean(Keys.NOTIFICATION_EXPIRATION_DEVICE)) {
-                long reminder = config.getLong(Keys.NOTIFICATION_EXPIRATION_USER_REMINDER);
+                long reminder = config.getLong(Keys.NOTIFICATION_EXPIRATION_DEVICE_REMINDER);
                 var devices = storage.getObjects(Device.class, new Request(new Columns.All()));
                 for (Device device : devices) {
                     if (checkTimeTrigger(device, currentTime, 0)) {
@@ -122,7 +118,7 @@ public class TaskExpirations implements ScheduleTask {
                 }
             }
 
-        } catch (StorageException | MessagingException e) {
+        } catch (Exception e) {
             LOGGER.warn("Failed to check expirations", e);
         }
     }

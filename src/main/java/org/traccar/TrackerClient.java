@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2022 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,9 +26,9 @@ import io.netty.util.concurrent.GlobalEventExecutor;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
-import java.util.concurrent.TimeUnit;
 
 public abstract class TrackerClient implements TrackerConnector {
 
@@ -37,7 +37,6 @@ public abstract class TrackerClient implements TrackerConnector {
 
     private final Bootstrap bootstrap;
 
-    private final int port;
     private final String address;
     private final String[] devices;
 
@@ -57,7 +56,6 @@ public abstract class TrackerClient implements TrackerConnector {
         secure = config.getBoolean(Keys.PROTOCOL_SSL.withPrefix(protocol));
         interval = config.getLong(Keys.PROTOCOL_INTERVAL.withPrefix(protocol));
         address = config.getString(Keys.PROTOCOL_ADDRESS.withPrefix(protocol));
-        port = config.getInteger(Keys.PROTOCOL_PORT.withPrefix(protocol), secure ? 443 : 80);
         devices = config.getString(Keys.PROTOCOL_DEVICES.withPrefix(protocol)).split("[, ]");
 
         BasePipelineFactory pipelineFactory = new BasePipelineFactory(this, config, protocol) {
@@ -84,8 +82,9 @@ public abstract class TrackerClient implements TrackerConnector {
             }
         };
 
+        var eventLoopGroupFactory = Main.getInjector().getInstance(EventLoopGroupFactory.class);
         bootstrap = new Bootstrap()
-                .group(EventLoopGroupFactory.getWorkerGroup())
+                .group(eventLoopGroupFactory.getWorkerGroup())
                 .channel(NioSocketChannel.class)
                 .handler(pipelineFactory);
     }
@@ -102,7 +101,7 @@ public abstract class TrackerClient implements TrackerConnector {
     }
 
     @Override
-    public void start() throws Exception {
+    public void start(int port) throws Exception {
         bootstrap.connect(address, port)
                 .syncUninterruptibly().channel().closeFuture().addListener(new GenericFutureListener<>() {
                     @Override

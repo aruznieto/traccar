@@ -17,7 +17,6 @@ package org.traccar.protocol;
 
 import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
-import org.traccar.session.DeviceSession;
 import org.traccar.Protocol;
 import org.traccar.helper.BitUtil;
 import org.traccar.helper.Parser;
@@ -26,6 +25,7 @@ import org.traccar.helper.UnitsConverter;
 import org.traccar.model.CellTower;
 import org.traccar.model.Network;
 import org.traccar.model.Position;
+import org.traccar.session.DeviceSession;
 
 import java.net.SocketAddress;
 import java.util.regex.Pattern;
@@ -90,6 +90,7 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
             .number("(d+)?|")                    // instant fuel
             .number("(d+)[%L]").optional()       // fuel level
             .groupEnd("?")
+            .expression(",([^,]{20,})").optional() // driver id
             .number(",(d+)").optional()          // hours
             .groupEnd("?")
             .groupEnd("?")
@@ -98,27 +99,17 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
             .compile();
 
     private String decodeAlarm(int value) {
-        switch (value) {
-            case 1:
-                return Position.ALARM_SOS;
-            case 5:
-            case 6:
-                return Position.ALARM_DOOR;
-            case 17:
-                return Position.ALARM_LOW_POWER;
-            case 18:
-                return Position.ALARM_POWER_CUT;
-            case 19:
-                return Position.ALARM_POWER_RESTORED;
-            case 39:
-                return Position.ALARM_ACCELERATION;
-            case 40:
-                return Position.ALARM_BRAKING;
-            case 41:
-                return Position.ALARM_CORNERING;
-            default:
-                return null;
-        }
+        return switch (value) {
+            case 1 -> Position.ALARM_SOS;
+            case 5, 6 -> Position.ALARM_DOOR;
+            case 17 -> Position.ALARM_LOW_POWER;
+            case 18 -> Position.ALARM_POWER_CUT;
+            case 19 -> Position.ALARM_POWER_RESTORED;
+            case 39 -> Position.ALARM_ACCELERATION;
+            case 40 -> Position.ALARM_BRAKING;
+            case 41 -> Position.ALARM_CORNERING;
+            default -> null;
+        };
     }
 
     @Override
@@ -137,19 +128,18 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
 
         String type = parser.next();
         String content = parser.next();
-        switch (type) {
-            case "000":
-                return decodePosition(deviceSession, content);
-            case "710":
-                return decodeSerial(deviceSession, content);
-            default:
+        return switch (type) {
+            case "000" -> decodePosition(deviceSession, content);
+            case "710" -> decodeSerial(deviceSession, content);
+            default -> {
                 Position position = new Position(getProtocolName());
                 position.setDeviceId(deviceSession.getDeviceId());
                 getLastLocation(position, null);
                 position.set(Position.KEY_TYPE, type);
                 position.set(Position.KEY_RESULT, content);
-                return position;
-        }
+                yield position;
+            }
+        };
     }
 
     private Object decodePosition(DeviceSession deviceSession, String content) {
@@ -168,7 +158,7 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
         if (event == 53) {
             position.set(Position.KEY_DRIVER_UNIQUE_ID, eventData);
         } else {
-            position.set(Position.KEY_ALARM, decodeAlarm(event));
+            position.addAlarm(decodeAlarm(event));
         }
 
         position.setTime(parser.nextDateTime());
@@ -197,13 +187,13 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_INPUT, input);
         position.set(Position.KEY_OUTPUT, output);
 
-        position.set(Position.KEY_POWER, parser.nextHexInt() * 0.01);
-        position.set(Position.KEY_BATTERY, parser.nextHexInt() * 0.01);
+        position.set(Position.KEY_POWER, parser.nextHexInt() / 100.0);
+        position.set(Position.KEY_BATTERY, parser.nextHexInt() / 100.0);
 
         if (parser.hasNext()) {
             String[] adc = parser.next().split("\\|");
             for (int i = 1; i < adc.length; i++) {
-                position.set(Position.PREFIX_ADC + (i + 1), Integer.parseInt(adc[i], 16) * 0.01);
+                position.set(Position.PREFIX_ADC + (i + 1), Integer.parseInt(adc[i], 16) / 100.0);
             }
         }
 
@@ -212,7 +202,7 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
             for (String fuel : fuels) {
                 int index = Integer.parseInt(fuel.substring(0, 2));
                 int value = Integer.parseInt(fuel.substring(2), 16);
-                position.set("fuel" + index, value * 0.1);
+                position.set("fuel" + index, value / 10.0);
             }
         }
 
@@ -225,7 +215,7 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
                 if (BitUtil.check(value, 15)) {
                     convertedValue = -convertedValue;
                 }
-                position.set(Position.PREFIX_TEMP + index, convertedValue * 0.1);
+                position.set(Position.PREFIX_TEMP + index, convertedValue / 10.0);
             }
         }
 
@@ -242,9 +232,13 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
                 position.set(Position.KEY_COOLANT_TEMP, parser.nextInt() - 40);
             }
             if (parser.hasNext()) {
-                position.set(Position.KEY_FUEL_CONSUMPTION, parser.nextInt() * 0.1);
+                position.set(Position.KEY_FUEL_CONSUMPTION, parser.nextInt() / 10.0);
             }
-            position.set(Position.KEY_FUEL_LEVEL, parser.nextInt());
+            position.set(Position.KEY_FUEL, parser.nextInt());
+        }
+
+        if (parser.hasNext()) {
+            position.set(Position.KEY_DRIVER_UNIQUE_ID, parser.next());
         }
 
         if (parser.hasNext()) {
@@ -268,11 +262,11 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
             int index = 0;
             String type = values[index++];
             switch (type) {
-                case "T1":
+                case "T1" -> {
                     index += 1; // speed
                     position.set(Position.KEY_RPM, Double.parseDouble(values[index++]));
                     index += 1; // fuel consumption
-                    position.set(Position.KEY_FUEL_LEVEL, Double.parseDouble(values[index++]));
+                    position.set(Position.KEY_FUEL, Double.parseDouble(values[index++]));
                     index += 4; // axel weights
                     index += 1; // turbo pressure
                     position.set(Position.KEY_COOLANT_TEMP, Integer.parseInt(values[index++]));
@@ -298,8 +292,8 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
                     index += 1; // brake pedal
                     position.set("catalystLevel", Double.parseDouble(values[index++]));
                     index += 1; // fuel type
-                    break;
-                case "T2":
+                }
+                case "T2" -> {
                     position.set(Position.KEY_ODOMETER, Double.parseDouble(values[index++]) * 1000);
                     index += 1; // total fuel
                     index += 1; // fuel used cruise
@@ -322,9 +316,7 @@ public class StartekProtocolDecoder extends BaseProtocolDecoder {
                     index += 1; // total cruise control distance
                     position.set(Position.KEY_FUEL_USED, Double.parseDouble(values[index++]));
                     index += 1; // total drive time
-                    break;
-                default:
-                    break;
+                }
             }
         }
 

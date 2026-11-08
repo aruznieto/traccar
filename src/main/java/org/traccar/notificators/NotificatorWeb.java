@@ -25,6 +25,7 @@ import org.traccar.session.ConnectionManager;
 
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
+import java.util.concurrent.CompletableFuture;
 
 @Singleton
 public final class NotificatorWeb extends Notificator {
@@ -34,28 +35,32 @@ public final class NotificatorWeb extends Notificator {
 
     @Inject
     public NotificatorWeb(ConnectionManager connectionManager, NotificationFormatter notificationFormatter) {
-        super(null, null);
+        super(null);
         this.connectionManager = connectionManager;
         this.notificationFormatter = notificationFormatter;
     }
 
     @Override
-    public void send(Notification notification, User user, Event event, Position position) {
+    public CompletableFuture<Void> sendAsync(Notification notification, User user, Event event, Position position) {
+        try {
+            Event copy = new Event();
+            copy.setId(event.getId());
+            copy.setDeviceId(event.getDeviceId());
+            copy.setType(event.getType());
+            copy.setEventTime(event.getEventTime());
+            copy.setPositionId(event.getPositionId());
+            copy.setGeofenceId(event.getGeofenceId());
+            copy.setMaintenanceId(event.getMaintenanceId());
+            copy.getAttributes().putAll(event.getAttributes());
 
-        Event copy = new Event();
-        copy.setId(event.getId());
-        copy.setDeviceId(event.getDeviceId());
-        copy.setType(event.getType());
-        copy.setEventTime(event.getEventTime());
-        copy.setPositionId(event.getPositionId());
-        copy.setGeofenceId(event.getGeofenceId());
-        copy.setMaintenanceId(event.getMaintenanceId());
-        copy.getAttributes().putAll(event.getAttributes());
+            var message = notificationFormatter.formatMessage(notification, user, event, position);
+            copy.set("message", message.digest());
 
-        var message = notificationFormatter.formatMessage(notification, user, event, position, "short");
-        copy.set("message", message.getBody());
-
-        connectionManager.updateEvent(true, user.getId(), copy);
+            connectionManager.updateEvent(true, user.getId(), copy);
+            return CompletableFuture.completedFuture(null);
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(e);
+        }
     }
 
 }

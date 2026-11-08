@@ -22,6 +22,7 @@ import org.traccar.model.Command;
 import org.traccar.model.Device;
 import org.traccar.model.Group;
 import org.traccar.model.GroupedModel;
+import org.traccar.model.LinkedDevice;
 import org.traccar.model.ManagedUser;
 import org.traccar.model.Notification;
 import org.traccar.model.Schedulable;
@@ -98,10 +99,12 @@ public class PermissionsService {
         }
     }
 
-    public void checkEdit(long userId, Class<?> clazz, boolean addition) throws StorageException, SecurityException {
+    public void checkEdit(
+            long userId, Class<?> clazz, boolean addition, boolean skipReadonly)
+            throws StorageException, SecurityException {
         if (!getUser(userId).getAdministrator()) {
             boolean denied = false;
-            if (getServer().getReadonly() || getUser(userId).getReadonly()) {
+            if (!skipReadonly && (getServer().getReadonly() || getUser(userId).getReadonly())) {
                 denied = true;
             } else if (clazz.equals(Device.class)) {
                 denied = getServer().getDeviceReadonly() || getUser(userId).getDeviceReadonly()
@@ -121,11 +124,12 @@ public class PermissionsService {
         }
     }
 
-    public void checkEdit(long userId, BaseModel object, boolean addition) throws StorageException, SecurityException {
+    public void checkEdit(
+            long userId, BaseModel object, boolean addition, boolean skipReadonly)
+            throws StorageException, SecurityException {
         if (!getUser(userId).getAdministrator()) {
-            checkEdit(userId, object.getClass(), addition);
-            if (object instanceof GroupedModel) {
-                GroupedModel after = ((GroupedModel) object);
+            checkEdit(userId, object.getClass(), addition, skipReadonly);
+            if (object instanceof GroupedModel after) {
                 if (after.getGroupId() > 0) {
                     GroupedModel before = null;
                     if (!addition) {
@@ -137,8 +141,7 @@ public class PermissionsService {
                     }
                 }
             }
-            if (object instanceof Schedulable) {
-                Schedulable after = ((Schedulable) object);
+            if (object instanceof Schedulable after) {
                 if (after.getCalendarId() > 0) {
                     Schedulable before = null;
                     if (!addition) {
@@ -150,8 +153,7 @@ public class PermissionsService {
                     }
                 }
             }
-            if (object instanceof Notification) {
-                Notification after = ((Notification) object);
+            if (object instanceof Notification after) {
                 if (after.getCommandId() > 0) {
                     Notification before = null;
                     if (!addition) {
@@ -209,15 +211,17 @@ public class PermissionsService {
 
     public <T extends BaseModel> void checkPermission(
             Class<T> clazz, long userId, long objectId) throws StorageException, SecurityException {
-        if (!getUser(userId).getAdministrator() && !(clazz.equals(User.class) && userId == objectId)) {
-            var object = storage.getObject(clazz, new Request(
+        Class<? extends BaseModel> queryClass = clazz.equals(LinkedDevice.class) ? Device.class : clazz;
+        if (!getUser(userId).getAdministrator() && !(queryClass.equals(User.class) && userId == objectId)) {
+            var object = storage.getObject(queryClass, new Request(
                     new Columns.Include("id"),
                     new Condition.And(
                             new Condition.Equals("id", objectId),
                             new Condition.Permission(
-                                    User.class, userId, clazz.equals(User.class) ? ManagedUser.class : clazz))));
+                                    User.class, userId,
+                                    queryClass.equals(User.class) ? ManagedUser.class : queryClass))));
             if (object == null) {
-                throw new SecurityException(clazz.getSimpleName() + " access denied");
+                throw new SecurityException(queryClass.getSimpleName() + " access denied");
             }
         }
     }

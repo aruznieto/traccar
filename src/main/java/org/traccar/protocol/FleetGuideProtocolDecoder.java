@@ -1,5 +1,5 @@
 /*
- * Copyright 2024 Anton Tananaev (anton@traccar.org)
+ * Copyright 2024 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package org.traccar.protocol;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
+import org.traccar.BaseProtocol;
 import org.traccar.BaseProtocolDecoder;
 import org.traccar.NetworkMessage;
 import org.traccar.Protocol;
@@ -127,7 +128,7 @@ public class FleetGuideProtocolDecoder extends BaseProtocolDecoder {
                     position.setLatitude(data.readUnsignedIntLE() * 90.0 / 0xFFFFFFFFL);
                     position.setLongitude(data.readUnsignedIntLE() * 180.0 / 0xFFFFFFFFL);
                     int speed = data.readUnsignedShortLE();
-                    position.setSpeed(UnitsConverter.knotsFromKph(BitUtil.to(speed, 14) * 0.1));
+                    position.setSpeed(UnitsConverter.knotsFromKph(BitUtil.to(speed, 14) / 10.0));
                     if (BitUtil.check(speed, 14)) {
                         position.setLatitude(-position.getLatitude());
                     }
@@ -151,16 +152,16 @@ public class FleetGuideProtocolDecoder extends BaseProtocolDecoder {
                     int powerLow = data.readUnsignedByte();
                     int powerFlags = data.readUnsignedByte();
                     int batteryHigh = data.readUnsignedByte();
-                    position.set(Position.KEY_POWER, (powerLow + (BitUtil.to(powerFlags, 5) << 8)) * 0.01);
+                    position.set(Position.KEY_POWER, (powerLow + (BitUtil.to(powerFlags, 5) << 8)) / 100.0);
                     position.set(Position.KEY_IGNITION, BitUtil.check(powerFlags, 5));
-                    position.set(Position.KEY_BATTERY, (BitUtil.from(powerFlags, 6) + (batteryHigh << 2)) * 0.01);
+                    position.set(Position.KEY_BATTERY, (BitUtil.from(powerFlags, 6) + (batteryHigh << 2)) / 100.0);
                     if (recordLength >= 4) {
                         int extraFlags = data.readUnsignedByte();
                         if (BitUtil.check(extraFlags, 0)) {
-                            position.set(Position.KEY_ALARM, Position.ALARM_LOW_POWER);
+                            position.addAlarm(Position.ALARM_LOW_POWER);
                         }
                         if (BitUtil.check(extraFlags, 1)) {
-                            position.set(Position.KEY_ALARM, Position.ALARM_LOW_BATTERY);
+                            position.addAlarm(Position.ALARM_LOW_BATTERY);
                         }
                     }
                     break;
@@ -198,24 +199,16 @@ public class FleetGuideProtocolDecoder extends BaseProtocolDecoder {
                     int tempMask = data.readUnsignedByte();
                     for (int i = 0; i < 8; i++) {
                         if (BitUtil.check(tempMask, i)) {
-                            position.set(Position.PREFIX_TEMP + (i + 1), data.readShortLE() * 0.01);
+                            position.set(Position.PREFIX_TEMP + (i + 1), data.readShortLE() / 100.0);
                         }
                     }
                     break;
                 case 18:
                     int sensorIndex = data.readUnsignedByte();
                     switch (recordLength - 1) {
-                        case 1:
-                            position.set("sensor" + sensorIndex, data.readUnsignedByte());
-                            break;
-                        case 2:
-                            position.set("sensor" + sensorIndex, data.readUnsignedShortLE());
-                            break;
-                        case 4:
-                            position.set("sensor" + sensorIndex, data.readUnsignedIntLE());
-                            break;
-                        default:
-                            break;
+                        case 1 -> position.set("sensor" + sensorIndex, data.readUnsignedByte());
+                        case 2 -> position.set("sensor" + sensorIndex, data.readUnsignedShortLE());
+                        case 4 -> position.set("sensor" + sensorIndex, data.readUnsignedIntLE());
                     }
                     break;
                 default:
@@ -244,7 +237,6 @@ public class FleetGuideProtocolDecoder extends BaseProtocolDecoder {
             positions.add(position);
         }
     }
-
 
     private void sendResponse(
             Channel channel, SocketAddress remoteAddress, Long deviceId, Integer type, Integer index) {
@@ -295,7 +287,7 @@ public class FleetGuideProtocolDecoder extends BaseProtocolDecoder {
 
     private ByteBuf decompress(ByteBuf in) {
 
-        ByteBuf out = Unpooled.buffer();
+        ByteBuf out = Unpooled.buffer(256, BaseProtocol.MAX_FRAME_LENGTH_LARGE);
 
         if (in.readableBytes() < 1) {
             return out;

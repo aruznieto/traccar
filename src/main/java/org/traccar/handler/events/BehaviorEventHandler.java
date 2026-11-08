@@ -1,5 +1,5 @@
 /*
- * Copyright 2021 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2021 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@
  */
 package org.traccar.handler.events;
 
-import io.netty.channel.ChannelHandler;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 import org.traccar.helper.UnitsConverter;
@@ -24,44 +23,34 @@ import org.traccar.model.Position;
 import org.traccar.session.cache.CacheManager;
 
 import jakarta.inject.Inject;
-import jakarta.inject.Singleton;
-import java.util.Collections;
-import java.util.Map;
 
-@Singleton
-@ChannelHandler.Sharable
-public class BehaviorEventHandler extends BaseEventHandler {
+public class BehaviorEventHandler extends BasePositionEventHandler {
 
     private final double accelerationThreshold;
     private final double brakingThreshold;
 
-    private final CacheManager cacheManager;
-
     @Inject
     public BehaviorEventHandler(Config config, CacheManager cacheManager) {
+        super(cacheManager);
         accelerationThreshold = config.getDouble(Keys.EVENT_BEHAVIOR_ACCELERATION_THRESHOLD);
         brakingThreshold = config.getDouble(Keys.EVENT_BEHAVIOR_BRAKING_THRESHOLD);
-        this.cacheManager = cacheManager;
     }
 
     @Override
-    protected Map<Event, Position> analyzePosition(Position position) {
-
-        Position lastPosition = cacheManager.getPosition(position.getDeviceId());
-        if (lastPosition != null && position.getFixTime().equals(lastPosition.getFixTime())) {
+    protected void onPosition(Position position, Position lastPosition, Callback callback) {
+        if (lastPosition != null && !position.getFixTime().equals(lastPosition.getFixTime())) {
             double acceleration = UnitsConverter.mpsFromKnots(position.getSpeed() - lastPosition.getSpeed()) * 1000
                     / (position.getFixTime().getTime() - lastPosition.getFixTime().getTime());
             if (accelerationThreshold != 0 && acceleration >= accelerationThreshold) {
                 Event event = new Event(Event.TYPE_ALARM, position);
                 event.set(Position.KEY_ALARM, Position.ALARM_ACCELERATION);
-                return Collections.singletonMap(event, position);
+                callback.eventDetected(event);
             } else if (brakingThreshold != 0 && acceleration <= -brakingThreshold) {
                 Event event = new Event(Event.TYPE_ALARM, position);
                 event.set(Position.KEY_ALARM, Position.ALARM_BRAKING);
-                return Collections.singletonMap(event, position);
+                callback.eventDetected(event);
             }
         }
-        return null;
     }
 
 }

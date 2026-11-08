@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,21 @@
  */
 package org.traccar.api.resource;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.traccar.api.ExtendedObjectResource;
+import org.traccar.model.Event;
+import org.traccar.model.ManagedUser;
+import org.traccar.model.Notification;
+import org.traccar.model.Typed;
+import org.traccar.model.User;
+import org.traccar.notification.NotificationMessage;
+import org.traccar.notification.NotificatorManager;
+import org.traccar.storage.StorageException;
+import org.traccar.storage.query.Columns;
+import org.traccar.storage.query.Condition;
+import org.traccar.storage.query.Request;
+
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -25,27 +40,15 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.traccar.api.ExtendedObjectResource;
-import org.traccar.model.Event;
-import org.traccar.model.Notification;
-import org.traccar.model.Typed;
-import org.traccar.model.User;
-import org.traccar.notification.MessageException;
-import org.traccar.notification.NotificationMessage;
-import org.traccar.notification.NotificatorManager;
-import org.traccar.storage.StorageException;
-import org.traccar.storage.query.Columns;
-import org.traccar.storage.query.Condition;
-import org.traccar.storage.query.Request;
-
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 @Path("notifications")
 @Produces(MediaType.APPLICATION_JSON)
@@ -58,7 +61,7 @@ public class NotificationResource extends ExtendedObjectResource<Notification> {
     private NotificatorManager notificatorManager;
 
     public NotificationResource() {
-        super(Notification.class);
+        super(Notification.class, "description", List.of("description"));
     }
 
     @GET
@@ -80,16 +83,19 @@ public class NotificationResource extends ExtendedObjectResource<Notification> {
 
     @GET
     @Path("notificators")
-    public Collection<Typed> getNotificators() {
-        return notificatorManager.getAllNotificatorTypes();
+    public Collection<Typed> getNotificators(@QueryParam("announcement") boolean announcement) {
+        Set<String> announcementsUnsupported = Set.of("command", "web");
+        return notificatorManager.getAllNotificatorTypes().stream()
+                .filter(typed -> !announcement || !announcementsUnsupported.contains(typed.type()))
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     @POST
     @Path("test")
-    public Response testMessage() throws MessageException, StorageException {
+    public Response testMessage() throws ExecutionException, InterruptedException, StorageException {
         User user = permissionsService.getUser(getUserId());
         for (Typed method : notificatorManager.getAllNotificatorTypes()) {
-            notificatorManager.getNotificator(method.getType()).send(null, user, new Event("test", 0), null);
+            notificatorManager.getNotificator(method.type()).sendAsync(null, user, new Event("test", 0), null).get();
         }
         return Response.noContent().build();
     }
@@ -97,9 +103,9 @@ public class NotificationResource extends ExtendedObjectResource<Notification> {
     @POST
     @Path("test/{notificator}")
     public Response testMessage(@PathParam("notificator") String notificator)
-            throws MessageException, StorageException {
+            throws ExecutionException, InterruptedException, StorageException {
         User user = permissionsService.getUser(getUserId());
-        notificatorManager.getNotificator(notificator).send(null, user, new Event("test", 0), null);
+        notificatorManager.getNotificator(notificator).sendAsync(null, user, new Event("test", 0), null).get();
         return Response.noContent().build();
     }
 
@@ -107,20 +113,33 @@ public class NotificationResource extends ExtendedObjectResource<Notification> {
     @Path("send/{notificator}")
     public Response sendMessage(
             @PathParam("notificator") String notificator, @QueryParam("userId") List<Long> userIds,
-            NotificationMessage message) throws MessageException, StorageException {
-        permissionsService.checkAdmin(getUserId());
+            NotificationMessage message) throws ExecutionException, InterruptedException, StorageException {
+        permissionsService.checkManager(getUserId());
         List<User> users;
         if (userIds.isEmpty()) {
-            users = storage.getObjects(User.class, new Request(new Columns.All()));
+            if (permissionsService.notAdmin(getUserId())) {
+                users = storage.getObjects(User.class, new Request(new Columns.All(),
+                        new Condition.Permission(User.class, getUserId(), ManagedUser.class).excludeGroups()));
+            } else {
+                users = storage.getObjects(User.class, new Request(new Columns.All()));
+            }
         } else {
             users = new ArrayList<>();
             for (long userId : userIds) {
+                var conditions = new LinkedList<Condition>();
+                conditions.add(new Condition.Equals("id", userId));
+                if (permissionsService.notAdmin(getUserId())) {
+                    conditions.add(new Condition.Permission(
+                            User.class, getUserId(), ManagedUser.class).excludeGroups());
+                }
                 users.add(storage.getObject(
-                        User.class, new Request(new Columns.All(), new Condition.Equals("id", userId))));
+                        User.class, new Request(new Columns.All(), Condition.merge(conditions))));
             }
         }
         for (User user : users) {
-            notificatorManager.getNotificator(notificator).send(user, message, null, null);
+            if (!user.getTemporary()) {
+                notificatorManager.getNotificator(notificator).sendAsync(user, message, null, null).get();
+            }
         }
         return Response.noContent().build();
     }

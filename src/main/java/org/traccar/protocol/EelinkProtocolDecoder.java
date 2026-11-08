@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2014 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.socket.DatagramChannel;
 import org.traccar.BaseProtocolDecoder;
-import org.traccar.session.DeviceSession;
 import org.traccar.NetworkMessage;
 import org.traccar.Protocol;
 import org.traccar.helper.BitUtil;
@@ -32,6 +31,7 @@ import org.traccar.model.CellTower;
 import org.traccar.model.Network;
 import org.traccar.model.Position;
 import org.traccar.model.WifiAccessPoint;
+import org.traccar.session.DeviceSession;
 
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -67,35 +67,21 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
     public static final int MSG_CAMERA_DATA = 0x1F;
 
     private String decodeAlarm(Short value) {
-        switch (value) {
-            case 0x01:
-                return Position.ALARM_POWER_OFF;
-            case 0x02:
-                return Position.ALARM_SOS;
-            case 0x03:
-                return Position.ALARM_LOW_BATTERY;
-            case 0x04:
-                return Position.ALARM_VIBRATION;
-            case 0x08:
-            case 0x09:
-                return Position.ALARM_GPS_ANTENNA_CUT;
-            case 0x25:
-                return Position.ALARM_REMOVING;
-            case 0x81:
-                return Position.ALARM_LOW_SPEED;
-            case 0x82:
-                return Position.ALARM_OVERSPEED;
-            case 0x83:
-                return Position.ALARM_GEOFENCE_ENTER;
-            case 0x84:
-                return Position.ALARM_GEOFENCE_EXIT;
-            case 0x85:
-                return Position.ALARM_ACCIDENT;
-            case 0x86:
-                return Position.ALARM_FALL_DOWN;
-            default:
-                return null;
-        }
+        return switch (value) {
+            case 0x01 -> Position.ALARM_POWER_OFF;
+            case 0x02 -> Position.ALARM_SOS;
+            case 0x03 -> Position.ALARM_LOW_BATTERY;
+            case 0x04 -> Position.ALARM_VIBRATION;
+            case 0x08, 0x09 -> Position.ALARM_GPS_ANTENNA_CUT;
+            case 0x25 -> Position.ALARM_REMOVING;
+            case 0x81 -> Position.ALARM_LOW_SPEED;
+            case 0x82 -> Position.ALARM_OVERSPEED;
+            case 0x83 -> Position.ALARM_GEOFENCE_ENTER;
+            case 0x84 -> Position.ALARM_GEOFENCE_EXIT;
+            case 0x85 -> Position.ALARM_ACCIDENT;
+            case 0x86 -> Position.ALARM_FALL_DOWN;
+            default -> null;
+        };
     }
 
     private void decodeStatus(Position position, int status) {
@@ -140,7 +126,7 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
 
             if (buf.readableBytes() >= 2 * 4) {
 
-                position.set(Position.KEY_BATTERY, buf.readUnsignedShort() * 0.001);
+                position.set(Position.KEY_BATTERY, buf.readUnsignedShort() / 1000.0);
 
                 position.set(Position.KEY_RSSI, buf.readUnsignedShort());
 
@@ -151,7 +137,7 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
 
         } else if (type == MSG_ALARM) {
 
-            position.set(Position.KEY_ALARM, decodeAlarm(buf.readUnsignedByte()));
+            position.addAlarm(decodeAlarm(buf.readUnsignedByte()));
 
         } else if (type == MSG_STATE) {
 
@@ -217,38 +203,42 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
         if (BitUtil.check(flags, 4)) {
             String mac = ByteBufUtil.hexDump(buf.readSlice(6)).replaceAll("(..)", "$1:");
             network.addWifiAccessPoint(WifiAccessPoint.from(
-                    mac.substring(0, mac.length() - 1), buf.readUnsignedByte()));
+                    mac.substring(0, mac.length() - 1), buf.readByte()));
         }
 
         if (BitUtil.check(flags, 5)) {
             String mac = ByteBufUtil.hexDump(buf.readSlice(6)).replaceAll("(..)", "$1:");
             network.addWifiAccessPoint(WifiAccessPoint.from(
-                    mac.substring(0, mac.length() - 1), buf.readUnsignedByte()));
+                    mac.substring(0, mac.length() - 1), buf.readByte()));
         }
 
         if (BitUtil.check(flags, 6)) {
             String mac = ByteBufUtil.hexDump(buf.readSlice(6)).replaceAll("(..)", "$1:");
             network.addWifiAccessPoint(WifiAccessPoint.from(
-                    mac.substring(0, mac.length() - 1), buf.readUnsignedByte()));
+                    mac.substring(0, mac.length() - 1), buf.readByte()));
         }
 
         if (BitUtil.check(flags, 7)) {
             buf.readUnsignedByte(); // radio access technology
             int count = buf.readUnsignedByte();
-            int lac = 0;
-            if (count > 0) {
+            int cellCount = BitUtil.to(count, 3);
+            if (cellCount > 0) {
                 mcc = buf.readUnsignedShort();
                 mnc = buf.readUnsignedShort();
-                lac = buf.readUnsignedShort(); // lac
+                int lac = buf.readUnsignedShort();
                 buf.readUnsignedShort(); // tac
-                buf.readUnsignedInt(); // cid
+                long cid = buf.readUnsignedInt();
                 buf.readUnsignedShort(); // ta
-            }
-            for (int i = 0; i < count; i++) {
-                int cid = buf.readUnsignedShort(); // physical cid
+                buf.readUnsignedShort(); // physical cid
                 buf.readUnsignedShort(); // e-arfcn
-                int rssi = buf.readUnsignedByte();
-                network.addCellTower(CellTower.from(mcc, mnc, lac, cid, rssi));
+                network.addCellTower(CellTower.from(mcc, mnc, lac, cid, buf.readByte()));
+                buf.skipBytes((cellCount - 1) * 5);
+            }
+            int wifiCount = BitUtil.between(count, 3, 7);
+            for (int i = 0; i < wifiCount; i++) {
+                String mac = ByteBufUtil.hexDump(buf.readSlice(6)).replaceAll("(..)", "$1:");
+                network.addWifiAccessPoint(WifiAccessPoint.from(
+                        mac.substring(0, mac.length() - 1), buf.readByte()));
             }
         }
 
@@ -258,7 +248,7 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
 
         if (type == MSG_WARNING) {
 
-            position.set(Position.KEY_ALARM, decodeAlarm(buf.readUnsignedByte()));
+            position.addAlarm(decodeAlarm(buf.readUnsignedByte()));
 
         } else if (type == MSG_REPORT) {
 
@@ -291,7 +281,7 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
         if (type == MSG_NORMAL) {
 
             if (buf.readableBytes() >= 2) {
-                position.set(Position.KEY_BATTERY, buf.readUnsignedShort() * 0.001);
+                position.set(Position.KEY_BATTERY, buf.readUnsignedShort() / 1000.0);
             }
 
             if (buf.readableBytes() >= 4) {
@@ -315,7 +305,7 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
 
             if (buf.readableBytes() >= 12) {
                 position.set(Position.PREFIX_TEMP + 1, buf.readShort() / 256.0);
-                position.set("humidity", buf.readUnsignedShort() * 0.1);
+                position.set(Position.KEY_HUMIDITY, buf.readUnsignedShort() / 10.0);
                 position.set("illuminance", buf.readUnsignedInt() / 256.0);
                 position.set("co2", buf.readUnsignedInt());
             }
@@ -333,7 +323,7 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
                     buf.readUnsignedByte(); // reserved
                     buf.readUnsignedByte(); // model
                     buf.readUnsignedByte(); // version
-                    position.set("tag" + i + "Battery", buf.readUnsignedShort() * 0.001);
+                    position.set("tag" + i + "Battery", buf.readUnsignedShort() / 1000.0);
                     position.set("tag" + i + "Temp", buf.readShort() / 256.0);
                     position.set("tag" + i + "Data", buf.readUnsignedShort());
                 }
@@ -407,17 +397,9 @@ public class EelinkProtocolDecoder extends BaseProtocolDecoder {
             int pid = buf.readUnsignedByte();
             int value = buf.readInt();
             switch (pid) {
-                case 0x89:
-                    position.set(Position.KEY_FUEL_CONSUMPTION, value);
-                    break;
-                case 0x8a:
-                    position.set(Position.KEY_ODOMETER, value * 1000L);
-                    break;
-                case 0x8b:
-                    position.set(Position.KEY_FUEL_LEVEL, value / 10);
-                    break;
-                default:
-                    break;
+                case 0x89 -> position.set(Position.KEY_FUEL_CONSUMPTION, value);
+                case 0x8a -> position.set(Position.KEY_ODOMETER, value * 1000L);
+                case 0x8b -> position.set(Position.KEY_FUEL, value / 10);
             }
         }
 

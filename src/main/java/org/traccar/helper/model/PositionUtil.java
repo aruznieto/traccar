@@ -1,5 +1,5 @@
 /*
- * Copyright 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2022 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ import org.traccar.model.BaseModel;
 import org.traccar.model.Device;
 import org.traccar.model.Position;
 import org.traccar.model.User;
-import org.traccar.session.cache.CacheManager;
 import org.traccar.storage.Storage;
 import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
@@ -30,16 +29,11 @@ import org.traccar.storage.query.Request;
 import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public final class PositionUtil {
 
-    private PositionUtil() {
-    }
-
-    public static boolean isLatest(CacheManager cacheManager, Position position) {
-        Position lastPosition = cacheManager.getPosition(position.getDeviceId());
-        return lastPosition == null || position.getFixTime().compareTo(lastPosition.getFixTime()) >= 0;
-    }
+    private PositionUtil() {}
 
     public static double calculateDistance(Position first, Position last, boolean useOdometer) {
         double distance;
@@ -54,14 +48,36 @@ public final class PositionUtil {
         return distance;
     }
 
-    public static List<Position> getPositions(
+    public static Stream<Position> getPositionsStreamWithExtra(
             Storage storage, long deviceId, Date from, Date to) throws StorageException {
-        return storage.getObjects(Position.class, new Request(
+        Stream<Position> extraStream = storage.getObjectsStream(Position.class, new Request(
                 new Columns.All(),
                 new Condition.And(
                         new Condition.Equals("deviceId", deviceId),
-                        new Condition.Between("fixTime", "from", from, "to", to)),
-                new Order("fixTime")));
+                        new Condition.Compare("fixTime", "<", from)),
+                new Order("fixTime", true, 1)));
+        Stream<Position> positions = getPositionsStream(storage, deviceId, from, to, 0);
+        return Stream.concat(extraStream, positions);
+    }
+
+    public static Stream<Position> getPositionsStream(
+            Storage storage, long deviceId, Date from, Date to, int limit) throws StorageException {
+        return storage.getObjectsStream(Position.class, new Request(
+                new Columns.All(),
+                new Condition.And(
+                        new Condition.Equals("deviceId", deviceId),
+                        new Condition.Between("fixTime", from, to)),
+                new Order("fixTime", false, limit)));
+    }
+
+    public static Position getEdgePosition(
+            Storage storage, long deviceId, Date from, Date to, boolean end) throws StorageException {
+        return storage.getObject(Position.class, new Request(
+                new Columns.All(),
+                new Condition.And(
+                        new Condition.Equals("deviceId", deviceId),
+                        new Condition.Between("fixTime", from, to)),
+                new Order("fixTime", end, 1)));
     }
 
     public static List<Position> getLatestPositions(Storage storage, long userId) throws StorageException {
@@ -74,7 +90,7 @@ public final class PositionUtil {
                 new Columns.All(), new Condition.LatestPositions()));
         return positions.stream()
                 .filter(position -> deviceIds.contains(position.getDeviceId()))
-                .collect(Collectors.toList());
+                .toList();
     }
 
 }

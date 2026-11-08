@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2026 Anton Tananaev (anton@traccar.org)
  * Copyright 2016 - 2018 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,6 @@ import org.traccar.model.Event;
 import org.traccar.model.Geofence;
 import org.traccar.model.Maintenance;
 import org.traccar.model.Position;
-import org.traccar.notification.MessageException;
 import org.traccar.notification.NotificatorManager;
 import org.traccar.session.cache.CacheManager;
 import org.traccar.storage.Storage;
@@ -42,9 +41,10 @@ import jakarta.annotation.Nullable;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 @Singleton
 public class NotificationManager {
@@ -59,6 +59,7 @@ public class NotificationManager {
 
     private final boolean geocodeOnRequest;
     private final long timeThreshold;
+    private final Set<Long> blockedUsers = new HashSet<>();
 
     @Inject
     public NotificationManager(
@@ -71,6 +72,12 @@ public class NotificationManager {
         this.geocoder = geocoder;
         geocodeOnRequest = config.getBoolean(Keys.GEOCODER_ON_REQUEST);
         timeThreshold = config.getLong(Keys.NOTIFICATOR_TIME_THRESHOLD);
+        String blockedUsersString = config.getString(Keys.NOTIFICATION_BLOCK_USERS);
+        if (blockedUsersString != null) {
+            for (String userIdString : blockedUsersString.split(",")) {
+                blockedUsers.add(Long.parseLong(userIdString));
+            }
+        }
     }
 
     private void updateEvent(Event event, Position position) {
@@ -101,11 +108,19 @@ public class NotificationManager {
                     return true;
                 })
                 .filter(notification -> {
+                    String geofenceIdsString = notification.getString("geofenceIds");
+                    if (geofenceIdsString != null) {
+                        return Arrays.stream(geofenceIdsString.split(",")).map(Long::parseLong)
+                                .anyMatch(geofenceId -> geofenceId == event.getGeofenceId());
+                    }
+                    return true;
+                })
+                .filter(notification -> {
                     long calendarId = notification.getCalendarId();
                     Calendar calendar = calendarId != 0 ? cacheManager.getObject(Calendar.class, calendarId) : null;
                     return calendar == null || calendar.checkMoment(event.getEventTime());
                 })
-                .collect(Collectors.toUnmodifiableList());
+                .toList();
 
         Device device = cacheManager.getObject(Device.class, event.getDeviceId());
         LOGGER.info(
@@ -122,12 +137,16 @@ public class NotificationManager {
 
             notifications.forEach(notification -> {
                 cacheManager.getNotificationUsers(notification.getId(), event.getDeviceId()).forEach(user -> {
+                    if (blockedUsers.contains(user.getId()) || user.getDisabled()) {
+                        LOGGER.info("User {} notification blocked", user.getId());
+                        return;
+                    }
                     for (String notificator : notification.getNotificatorsTypes()) {
-                        try {
-                            notificatorManager.getNotificator(notificator).send(notification, user, event, position);
-                        } catch (MessageException exception) {
-                            LOGGER.warn("Notification failed", exception);
-                        }
+                        notificatorManager.getNotificator(notificator).sendAsync(notification, user, event, position)
+                                .exceptionally(throwable -> {
+                                    LOGGER.warn("Notification failed", throwable);
+                                    return null;
+                                });
                     }
                 });
             });
@@ -146,10 +165,9 @@ public class NotificationManager {
             if (event.getMaintenanceId() != 0) {
                 eventData.setMaintenance(cacheManager.getObject(Maintenance.class, event.getMaintenanceId()));
             }
-            eventForwarder.forward(eventData, (success, throwable) -> {
-                if (!success) {
-                    LOGGER.warn("Event forwarding failed", throwable);
-                }
+            eventForwarder.forward(eventData).exceptionally(throwable -> {
+                LOGGER.warn("Event forwarding failed", throwable);
+                return null;
             });
         }
     }
@@ -159,12 +177,12 @@ public class NotificationManager {
             Event event = entry.getKey();
             Position position = entry.getValue();
             try {
-                cacheManager.addDevice(event.getDeviceId());
-                updateEvent(event, position);
+                cacheManager.withDevice(event.getDeviceId(), () -> {
+                    updateEvent(event, position);
+                    return null;
+                });
             } catch (Exception e) {
                 throw new RuntimeException(e);
-            } finally {
-                cacheManager.removeDevice(event.getDeviceId());
             }
         }
     }

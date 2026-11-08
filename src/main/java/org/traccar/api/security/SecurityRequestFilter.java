@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,9 @@
  */
 package org.traccar.api.security;
 
-import com.google.inject.Injector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.traccar.api.resource.SessionResource;
 import org.traccar.database.StatisticsManager;
-import org.traccar.helper.DataConverter;
 import org.traccar.model.User;
 import org.traccar.storage.StorageException;
 
@@ -36,22 +33,11 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
 import java.io.IOException;
 import java.lang.reflect.Method;
-import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
-import java.util.Date;
 
 public class SecurityRequestFilter implements ContainerRequestFilter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(SecurityRequestFilter.class);
-
-    public static String[] decodeBasicAuth(String auth) {
-        auth = auth.replaceFirst("[B|b]asic ", "");
-        byte[] decodedBytes = DataConverter.parseBase64(auth);
-        if (decodedBytes != null && decodedBytes.length > 0) {
-            return new String(decodedBytes, StandardCharsets.US_ASCII).split(":", 2);
-        }
-        return null;
-    }
 
     @Context
     private HttpServletRequest request;
@@ -64,9 +50,6 @@ public class SecurityRequestFilter implements ContainerRequestFilter {
 
     @Inject
     private StatisticsManager statisticsManager;
-
-    @Inject
-    private Injector injector;
 
     @Override
     public void filter(ContainerRequestContext requestContext) {
@@ -83,14 +66,9 @@ public class SecurityRequestFilter implements ContainerRequestFilter {
             if (authHeader != null) {
 
                 try {
-                    LoginResult loginResult;
-                    if (authHeader.startsWith("Bearer ")) {
-                        loginResult = loginService.login(authHeader.substring(7));
-                    } else {
-                        String[] auth = decodeBasicAuth(authHeader);
-                        loginResult = loginService.login(auth[0], auth[1], null);
-                    }
-                    if (loginResult != null) {
+                    String[] auth = authHeader.split(" ");
+                    LoginResult loginResult = loginService.login(auth[0], auth[1]);
+                    if (loginResult != null && loginResult.getUser() != null) {
                         User user = loginResult.getUser();
                         statisticsManager.registerRequest(user.getId());
                         securityContext = new UserSecurityContext(
@@ -100,17 +78,14 @@ public class SecurityRequestFilter implements ContainerRequestFilter {
                     throw new WebApplicationException(e);
                 }
 
-            } else if (request.getSession() != null) {
+            } else {
 
-                Long userId = (Long) request.getSession().getAttribute(SessionResource.USER_ID_KEY);
-                Date expiration = (Date) request.getSession().getAttribute(SessionResource.EXPIRATION_KEY);
-                if (userId != null) {
-                    User user = injector.getInstance(PermissionsService.class).getUser(userId);
-                    if (user != null) {
-                        user.checkDisabled();
-                        statisticsManager.registerRequest(userId);
-                        securityContext = new UserSecurityContext(new UserPrincipal(userId, expiration));
-                    }
+                LoginResult loginResult = loginService.login(request);
+                if (loginResult != null && loginResult.getUser() != null) {
+                    User user = loginResult.getUser();
+                    statisticsManager.registerRequest(user.getId());
+                    securityContext = new UserSecurityContext(
+                            new UserPrincipal(user.getId(), loginResult.getExpiration()));
                 }
 
             }

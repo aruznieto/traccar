@@ -17,6 +17,8 @@ package org.traccar.schedule;
 
 import com.google.inject.Injector;
 import org.traccar.LifecycleObject;
+import org.traccar.config.Config;
+import org.traccar.config.Keys;
 
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -28,16 +30,18 @@ import java.util.stream.Stream;
 public class ScheduleManager implements LifecycleObject {
 
     private final Injector injector;
+    private final boolean secondary;
     private ScheduledExecutorService executor;
 
     @Inject
-    public ScheduleManager(Injector injector) {
+    public ScheduleManager(Injector injector, Config config) {
         this.injector = injector;
+        secondary = config.getBoolean(Keys.BROADCAST_SECONDARY);
     }
 
     @Override
     public void start() {
-        executor = Executors.newSingleThreadScheduledExecutor();
+        executor = Executors.newScheduledThreadPool(4);
         Stream.of(
                 TaskHealthCheck.class,
                 TaskClearStatus.class,
@@ -45,8 +49,14 @@ public class ScheduleManager implements LifecycleObject {
                 TaskDeleteTemporary.class,
                 TaskReports.class,
                 TaskDeviceInactivityCheck.class,
+                TaskSessionTimeout.class,
                 TaskWebSocketKeepalive.class)
-                .forEachOrdered(task -> injector.getInstance(task).schedule(executor));
+                .forEachOrdered(taskClass -> {
+                    var task = injector.getInstance(taskClass);
+                    if (task.multipleInstances() || !secondary) {
+                        task.schedule(executor);
+                    }
+                });
     }
 
     @Override

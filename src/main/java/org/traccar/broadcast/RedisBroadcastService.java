@@ -1,5 +1,5 @@
 /*
- * Copyright 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2023 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,15 +20,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPubSub;
+import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 
 import java.io.IOException;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPubSub;
-import redis.clients.jedis.exceptions.JedisConnectionException;
-import redis.clients.jedis.exceptions.JedisException;
 
 public class RedisBroadcastService extends BaseBroadcastService {
 
@@ -36,22 +36,24 @@ public class RedisBroadcastService extends BaseBroadcastService {
 
     private final ObjectMapper objectMapper;
 
-    private final ExecutorService service = Executors.newSingleThreadExecutor();
+    private final ExecutorService executorService;
 
     private final String channel = "traccar";
 
     private Jedis subscriber;
-    private Jedis publisher;
+    private JedisPool publisherPool;
 
     private final String id = UUID.randomUUID().toString();
 
-    public RedisBroadcastService(Config config, ObjectMapper objectMapper) throws IOException {
+    public RedisBroadcastService(
+            Config config, ExecutorService executorService, ObjectMapper objectMapper) throws IOException {
+        this.executorService = executorService;
         this.objectMapper = objectMapper;
         String url = config.getString(Keys.BROADCAST_ADDRESS);
 
         try {
             subscriber = new Jedis(url);
-            publisher = new Jedis(url);
+            publisherPool = new JedisPool(url);
             subscriber.connect();
         } catch (JedisConnectionException e) {
             throw new IOException(e);
@@ -65,17 +67,17 @@ public class RedisBroadcastService extends BaseBroadcastService {
 
     @Override
     protected void sendMessage(BroadcastMessage message) {
-        try {
-            String payload = id  + ":" + objectMapper.writeValueAsString(message);
+        try (Jedis publisher = publisherPool.getResource()) {
+            String payload = id + ":" + objectMapper.writeValueAsString(message);
             publisher.publish(channel, payload);
-        } catch (IOException | JedisConnectionException e) {
+        } catch (IOException | JedisException e) {
             LOGGER.warn("Broadcast failed", e);
         }
     }
 
     @Override
     public void start() throws IOException {
-        service.submit(receiver);
+        executorService.submit(receiver);
     }
 
     @Override
@@ -89,14 +91,13 @@ public class RedisBroadcastService extends BaseBroadcastService {
             LOGGER.warn("Subscriber close failed", e);
         }
         try {
-            if (publisher != null) {
-                publisher.close();
-                publisher = null;
+            if (publisherPool != null) {
+                publisherPool.close();
+                publisherPool = null;
             }
         } catch (JedisException e) {
             LOGGER.warn("Publisher close failed", e);
         }
-        service.shutdown();
     }
 
     private final Runnable receiver = new Runnable() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2024 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 package org.traccar.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-
 import org.traccar.storage.QueryIgnore;
 import org.traccar.storage.StorageName;
 
@@ -124,16 +123,6 @@ public class Server extends ExtendedModel implements UserRestrictions {
 
     public void setZoom(int zoom) {
         this.zoom = zoom;
-    }
-
-    private boolean twelveHourFormat;
-
-    public boolean getTwelveHourFormat() {
-        return twelveHourFormat;
-    }
-
-    public void setTwelveHourFormat(boolean twelveHourFormat) {
-        this.twelveHourFormat = twelveHourFormat;
     }
 
     private boolean forceSettings;

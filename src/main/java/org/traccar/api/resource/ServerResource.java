@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2015 - 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 package org.traccar.api.resource;
 
 import org.traccar.api.BaseResource;
-import org.traccar.model.ObjectOperation;
 import org.traccar.config.Config;
 import org.traccar.config.Keys;
 import org.traccar.database.OpenIdProvider;
@@ -25,6 +24,7 @@ import org.traccar.helper.Log;
 import org.traccar.helper.LogAction;
 import org.traccar.helper.model.UserUtil;
 import org.traccar.mail.MailManager;
+import org.traccar.model.ObjectOperation;
 import org.traccar.model.Server;
 import org.traccar.model.User;
 import org.traccar.session.cache.CacheManager;
@@ -37,6 +37,7 @@ import org.traccar.storage.query.Request;
 import jakarta.annotation.Nullable;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -45,6 +46,7 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.io.File;
@@ -53,8 +55,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.TimeZone;
 
 @Path("server")
@@ -83,6 +85,12 @@ public class ServerResource extends BaseResource {
     @Nullable
     private Geocoder geocoder;
 
+    @Inject
+    private LogAction actionLogger;
+
+    @Context
+    private HttpServletRequest request;
+
     @PermitAll
     @GET
     public Server get() throws StorageException {
@@ -110,7 +118,7 @@ public class ServerResource extends BaseResource {
                 new Columns.Exclude("id"),
                 new Condition.Equals("id", server.getId())));
         cacheManager.invalidateObject(true, Server.class, server.getId(), ObjectOperation.UPDATE);
-        LogAction.edit(getUserId(), server);
+        actionLogger.edit(request, getUserId(), server);
         return Response.ok(server).build();
     }
 
@@ -127,7 +135,7 @@ public class ServerResource extends BaseResource {
     @Path("timezones")
     @GET
     public Collection<String> timezones() {
-        return Arrays.asList(TimeZone.getAvailableIDs());
+        return List.of(TimeZone.getAvailableIDs());
     }
 
     @Path("file/{path}")
@@ -154,11 +162,26 @@ public class ServerResource extends BaseResource {
         return Response.ok().build();
     }
 
+    @Path("gc")
+    @GET
+    public Response gc() throws StorageException {
+        permissionsService.checkAdmin(getUserId());
+        System.gc();
+        return Response.ok().build();
+    }
+
     @Path("cache")
     @GET
     public String cache() throws StorageException {
         permissionsService.checkAdmin(getUserId());
         return cacheManager.toString();
+    }
+
+    @Path("reboot")
+    @POST
+    public void reboot() throws StorageException {
+        permissionsService.checkAdmin(getUserId());
+        System.exit(130);
     }
 
 }

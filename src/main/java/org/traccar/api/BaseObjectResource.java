@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2017 - 2026 Anton Tananaev (anton@traccar.org)
  * Copyright 2017 - 2018 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,27 +17,32 @@
 package org.traccar.api;
 
 import org.traccar.api.security.ServiceAccountUser;
-import org.traccar.model.ObjectOperation;
 import org.traccar.helper.LogAction;
 import org.traccar.model.BaseModel;
 import org.traccar.model.Group;
+import org.traccar.model.ObjectOperation;
 import org.traccar.model.Permission;
 import org.traccar.model.User;
 import org.traccar.session.ConnectionManager;
 import org.traccar.session.cache.CacheManager;
+import org.traccar.storage.Storage;
 import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
 import org.traccar.storage.query.Request;
 
 import jakarta.inject.Inject;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.Response;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 public abstract class BaseObjectResource<T extends BaseModel> extends BaseResource {
 
@@ -46,6 +51,12 @@ public abstract class BaseObjectResource<T extends BaseModel> extends BaseResour
 
     @Inject
     private ConnectionManager connectionManager;
+
+    @Inject
+    private LogAction actionLogger;
+
+    @Context
+    private HttpServletRequest request;
 
     protected final Class<T> baseClass;
 
@@ -68,16 +79,20 @@ public abstract class BaseObjectResource<T extends BaseModel> extends BaseResour
 
     @POST
     public Response add(T entity) throws Exception {
-        permissionsService.checkEdit(getUserId(), entity, true);
+        permissionsService.checkEdit(getUserId(), entity, true, false);
+
+        if (entity instanceof Group group) {
+            checkGroupHierarchy(group, true);
+        }
 
         entity.setId(storage.addObject(entity, new Request(new Columns.Exclude("id"))));
-        LogAction.create(getUserId(), entity);
+        actionLogger.create(request, getUserId(), entity);
 
         if (getUserId() != ServiceAccountUser.ID) {
             storage.addPermission(new Permission(User.class, getUserId(), baseClass, entity.getId()));
             cacheManager.invalidatePermission(true, User.class, getUserId(), baseClass, entity.getId(), true);
             connectionManager.invalidatePermission(true, User.class, getUserId(), baseClass, entity.getId(), true);
-            LogAction.link(getUserId(), User.class, getUserId(), baseClass, entity.getId());
+            actionLogger.link(request, getUserId(), User.class, getUserId(), baseClass, entity.getId());
         }
 
         return Response.ok(entity).build();
@@ -86,25 +101,27 @@ public abstract class BaseObjectResource<T extends BaseModel> extends BaseResour
     @Path("{id}")
     @PUT
     public Response update(T entity) throws Exception {
-        permissionsService.checkEdit(getUserId(), entity, false);
         permissionsService.checkPermission(baseClass, getUserId(), entity.getId());
 
-        if (entity instanceof User) {
+        boolean skipReadonly = false;
+        if (entity instanceof User after) {
             User before = storage.getObject(User.class, new Request(
                     new Columns.All(), new Condition.Equals("id", entity.getId())));
-            permissionsService.checkUserUpdate(getUserId(), before, (User) entity);
-        } else if (entity instanceof Group) {
-            Group group = (Group) entity;
-            if (group.getId() == group.getGroupId()) {
-                throw new IllegalArgumentException("Cycle in group hierarchy");
-            }
+            permissionsService.checkUserUpdate(getUserId(), before, after);
+            skipReadonly = permissionsService.getUser(getUserId())
+                    .compare(after, "notificationTokens", "termsAccepted");
+        }
+
+        permissionsService.checkEdit(getUserId(), entity, false, skipReadonly);
+
+        if (entity instanceof Group group) {
+            checkGroupHierarchy(group, false);
         }
 
         storage.updateObject(entity, new Request(
                 new Columns.Exclude("id"),
                 new Condition.Equals("id", entity.getId())));
-        if (entity instanceof User) {
-            User user = (User) entity;
+        if (entity instanceof User user) {
             if (user.getHashedPassword() != null) {
                 storage.updateObject(entity, new Request(
                         new Columns.Include("hashedPassword", "salt"),
@@ -112,21 +129,41 @@ public abstract class BaseObjectResource<T extends BaseModel> extends BaseResour
             }
         }
         cacheManager.invalidateObject(true, entity.getClass(), entity.getId(), ObjectOperation.UPDATE);
-        LogAction.edit(getUserId(), entity);
+        actionLogger.edit(request, getUserId(), entity);
 
         return Response.ok(entity).build();
+    }
+
+    void checkGroupHierarchy(Group group, boolean addition) throws StorageException {
+        if (group.getGroupId() > 0) {
+            Map<Long, Long> parents;
+            try (var groups = storage.getObjectsStream(
+                    Group.class, new Request(new Columns.Include("id", "groupId")))) {
+                parents = groups.collect(Collectors.toMap(Group::getId, Group::getGroupId));
+            }
+            parents.put(addition ? 0L : group.getId(), group.getGroupId());
+            for (long parentId : parents.values()) {
+                int depth = 1;
+                while (parentId > 0) {
+                    if (++depth > Storage.MAX_GROUP_DEPTH) {
+                        throw new IllegalArgumentException("Maximum group depth exceeded");
+                    }
+                    parentId = parents.getOrDefault(parentId, 0L);
+                }
+            }
+        }
     }
 
     @Path("{id}")
     @DELETE
     public Response remove(@PathParam("id") long id) throws Exception {
-        permissionsService.checkEdit(getUserId(), baseClass, false);
         permissionsService.checkPermission(baseClass, getUserId(), id);
+        permissionsService.checkEdit(getUserId(), baseClass, false, false);
 
         storage.removeObject(baseClass, new Request(new Condition.Equals("id", id)));
         cacheManager.invalidateObject(true, baseClass, id, ObjectOperation.DELETE);
 
-        LogAction.remove(getUserId(), baseClass, id);
+        actionLogger.remove(request, getUserId(), baseClass, id);
 
         return Response.noContent().build();
     }

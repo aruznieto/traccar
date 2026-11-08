@@ -34,7 +34,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-public class TaskDeviceInactivityCheck implements ScheduleTask {
+public class TaskDeviceInactivityCheck extends SingleScheduleTask {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(TaskDeviceInactivityCheck.class);
 
@@ -88,7 +88,8 @@ public class TaskDeviceInactivityCheck implements ScheduleTask {
             return deviceValue;
         } else {
             long groupId = device.getGroupId();
-            while (groupId > 0) {
+            int depth = Storage.MAX_GROUP_DEPTH;
+            while (groupId > 0 && depth-- > 0) {
                 Group group = groups.get(groupId);
                 if (group == null) {
                     return 0;

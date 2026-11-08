@@ -32,13 +32,15 @@ import org.traccar.storage.query.Request;
 
 public final class AttributeUtil {
 
-    private AttributeUtil() {
-    }
+    private AttributeUtil() {}
 
     public interface Provider {
         Device getDevice();
+
         Group getGroup(long groupId);
+
         Server getServer();
+
         Config getConfig();
     }
 
@@ -46,12 +48,13 @@ public final class AttributeUtil {
         return lookup(new CacheProvider(cacheManager, deviceId), key);
     }
 
-    @SuppressWarnings({ "deprecation", "unchecked" })
+    @SuppressWarnings("unchecked")
     public static <T> T lookup(Provider provider, ConfigKey<T> key) {
         Device device = provider.getDevice();
         Object result = device.getAttributes().get(key.getKey());
         long groupId = device.getGroupId();
-        while (result == null && groupId > 0) {
+        int depth = Storage.MAX_GROUP_DEPTH;
+        while (result == null && groupId > 0 && depth-- > 0) {
             Group group = provider.getGroup(groupId);
             if (group != null) {
                 result = group.getAttributes().get(key.getKey());
@@ -70,20 +73,20 @@ public final class AttributeUtil {
         if (result != null) {
             Class<T> valueClass = key.getValueClass();
             if (valueClass.equals(Boolean.class)) {
-                return (T) (result instanceof String
-                        ? Boolean.parseBoolean((String) result)
+                return (T) (result instanceof String stringResult
+                        ? Boolean.parseBoolean(stringResult)
                         : result);
             } else if (valueClass.equals(Integer.class)) {
-                return (T) (Object) (result instanceof String
-                        ? Integer.parseInt((String) result)
+                return (T) (Object) (result instanceof String stringResult
+                        ? Integer.parseInt(stringResult)
                         : ((Number) result).intValue());
             } else if (valueClass.equals(Long.class)) {
-                return (T) (Object) (result instanceof String
-                        ? Long.parseLong((String) result)
+                return (T) (Object) (result instanceof String stringResult
+                        ? Long.parseLong(stringResult)
                         : ((Number) result).longValue());
             } else if (valueClass.equals(Double.class)) {
-                return (T) (Object) (result instanceof String
-                        ? Double.parseDouble((String) result)
+                return (T) (Object) (result instanceof String stringResult
+                        ? Double.parseDouble(stringResult)
                         : ((Number) result).doubleValue());
             } else {
                 return (T) result;

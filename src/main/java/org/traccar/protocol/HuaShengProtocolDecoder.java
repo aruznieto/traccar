@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2023 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2026 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import org.traccar.BaseProtocolDecoder;
-import org.traccar.session.DeviceSession;
 import org.traccar.NetworkMessage;
 import org.traccar.Protocol;
 import org.traccar.helper.BitUtil;
@@ -30,6 +29,7 @@ import org.traccar.model.CellTower;
 import org.traccar.model.Network;
 import org.traccar.model.Position;
 import org.traccar.model.WifiAccessPoint;
+import org.traccar.session.DeviceSession;
 
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -72,24 +72,16 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
     }
 
     private String decodeAlarm(int event) {
-        switch (event) {
-            case 4:
-                return Position.ALARM_FATIGUE_DRIVING;
-            case 6:
-                return Position.ALARM_SOS;
-            case 7:
-                return Position.ALARM_BRAKING;
-            case 8:
-                return Position.ALARM_ACCELERATION;
-            case 9:
-                return Position.ALARM_CORNERING;
-            case 10:
-                return Position.ALARM_ACCIDENT;
-            case 16:
-                return Position.ALARM_REMOVING;
-            default:
-                return null;
-        }
+        return switch (event) {
+            case 4 -> Position.ALARM_FATIGUE_DRIVING;
+            case 6 -> Position.ALARM_SOS;
+            case 7 -> Position.ALARM_BRAKING;
+            case 8 -> Position.ALARM_ACCELERATION;
+            case 9 -> Position.ALARM_CORNERING;
+            case 10 -> Position.ALARM_ACCIDENT;
+            case 16 -> Position.ALARM_REMOVING;
+            default -> null;
+        };
     }
 
     @Override
@@ -163,21 +155,12 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
         while (buf.readableBytes() > 2) {
             String value = ByteBufUtil.hexDump(buf.readSlice(2));
             int digit = Integer.parseInt(value.substring(0, 1), 16);
-            char prefix;
-            switch (digit >> 2) {
-                default:
-                    prefix = 'P';
-                    break;
-                case 1:
-                    prefix = 'C';
-                    break;
-                case 2:
-                    prefix = 'B';
-                    break;
-                case 3:
-                    prefix = 'U';
-                    break;
-            }
+            char prefix = switch (digit >> 2) {
+                default -> 'P';
+                case 1 -> 'C';
+                case 2 -> 'B';
+                case 3 -> 'U';
+            };
             codes.append(prefix).append(digit % 4).append(value.substring(1));
             if (buf.readableBytes() > 2) {
                 codes.append(' ');
@@ -208,7 +191,7 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
         position.set(Position.KEY_IGNITION, BitUtil.check(status, 14));
 
         int event = buf.readUnsignedShort();
-        position.set(Position.KEY_ALARM, decodeAlarm(event));
+        position.addAlarm(decodeAlarm(event));
         position.set(Position.KEY_EVENT, event);
 
         String time = buf.readCharSequence(12, StandardCharsets.US_ASCII).toString();
@@ -222,8 +205,8 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
                 .setSecond(Integer.parseInt(time.substring(10, 12)));
         position.setTime(dateBuilder.getDate());
 
-        position.setLongitude(buf.readInt() * 0.00001);
-        position.setLatitude(buf.readInt() * 0.00001);
+        position.setLongitude(buf.readInt() / 100000.0);
+        position.setLatitude(buf.readInt() / 100000.0);
 
         position.setSpeed(UnitsConverter.knotsFromKph(buf.readUnsignedShort()));
         position.setCourse(buf.readUnsignedShort());
@@ -235,7 +218,7 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
 
         while (buf.readableBytes() > 4) {
             int subtype = buf.readUnsignedShort();
-            int length = buf.readUnsignedShort() - 4;
+            int length = Math.max(buf.readUnsignedShort() - 4, 0);
             int endIndex = buf.readerIndex() + length;
             switch (subtype) {
                 case 0x0001:
@@ -249,10 +232,13 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
                     }
                     position.set("averageSpeed", buf.readUnsignedByte());
                     buf.readUnsignedShort(); // interval fuel consumption
-                    position.set(Position.KEY_FUEL_CONSUMPTION, buf.readUnsignedShort() * 0.01);
+                    position.set(Position.KEY_FUEL_CONSUMPTION, buf.readUnsignedShort() / 100.0);
                     position.set(Position.KEY_ODOMETER_TRIP, buf.readUnsignedShort());
-                    position.set(Position.KEY_POWER, buf.readUnsignedShort() * 0.01);
-                    position.set(Position.KEY_FUEL_LEVEL, buf.readUnsignedByte() * 0.4);
+                    position.set(Position.KEY_POWER, buf.readUnsignedShort() / 100.0);
+                    position.set(Position.KEY_FUEL, buf.readUnsignedByte() * 0.4);
+                    if (endIndex - buf.readerIndex() >= 7) {
+                        position.set("fuelLevel2", buf.readUnsignedShort());
+                    }
                     buf.readUnsignedInt(); // trip id
                     if (buf.readerIndex() < endIndex) {
                         position.set("adBlueLevel", buf.readUnsignedByte() * 0.4);
@@ -271,13 +257,14 @@ public class HuaShengProtocolDecoder extends BaseProtocolDecoder {
                             buf.readCharSequence(length, StandardCharsets.US_ASCII).toString()) * 1000);
                     break;
                 case 0x0011:
-                    position.set(Position.KEY_HOURS, buf.readUnsignedInt() * 0.05);
+                    position.set(Position.KEY_HOURS, buf.readUnsignedInt() / 20.0);
                     break;
                 case 0x0014:
+                    buf.readUnsignedByte(); // valid flag
                     position.set(Position.KEY_ENGINE_LOAD, buf.readUnsignedByte() / 255.0);
                     position.set("timingAdvance", buf.readUnsignedByte() * 0.5);
                     position.set("airTemp", buf.readUnsignedByte() - 40);
-                    position.set("airFlow", buf.readUnsignedShort() * 0.01);
+                    position.set("airFlow", buf.readUnsignedShort() / 100.0);
                     position.set(Position.KEY_THROTTLE, buf.readUnsignedByte() / 255.0);
                     break;
                 case 0x0020:

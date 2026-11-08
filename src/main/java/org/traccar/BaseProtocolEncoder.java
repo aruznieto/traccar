@@ -82,23 +82,16 @@ public abstract class BaseProtocolEncoder extends ChannelOutboundHandlerAdapter 
     @Override
     public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) throws Exception {
 
-        if (msg instanceof NetworkMessage) {
-            NetworkMessage networkMessage = (NetworkMessage) msg;
-            if (networkMessage.getMessage() instanceof Command) {
+        if (msg instanceof NetworkMessage networkMessage) {
+            if (networkMessage.getMessage() instanceof Command command) {
 
-                Command command = (Command) networkMessage.getMessage();
                 Object encodedCommand = encodeCommand(ctx.channel(), command);
 
-                StringBuilder s = new StringBuilder();
-                s.append("[").append(NetworkUtil.session(ctx.channel())).append("] ");
-                s.append("id: ").append(getUniqueId(command.getDeviceId())).append(", ");
-                s.append("command type: ").append(command.getType()).append(" ");
-                if (encodedCommand != null) {
-                    s.append("sent");
-                } else {
-                    s.append("not sent");
-                }
-                LOGGER.info(s.toString());
+                LOGGER.info("[{}] id: {}, command type: {} {}",
+                        NetworkUtil.session(ctx.channel()),
+                        getUniqueId(command.getDeviceId()),
+                        command.getType(),
+                        encodedCommand != null ? "sent" : "not sent");
 
                 ctx.write(new NetworkMessage(encodedCommand, networkMessage.getRemoteAddress()), promise);
 

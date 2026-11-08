@@ -1,5 +1,5 @@
 /*
- * Copyright 2016 - 2022 Anton Tananaev (anton@traccar.org)
+ * Copyright 2016 - 2026 Anton Tananaev (anton@traccar.org)
  * Copyright 2016 Andrey Kunitsyn (andrey@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,39 +16,39 @@
  */
 package org.traccar.geofence;
 
+import org.traccar.helper.DistanceCalculator;
+
 import java.text.ParseException;
 import java.util.ArrayList;
-
-import org.traccar.config.Config;
-import org.traccar.config.Keys;
-import org.traccar.helper.DistanceCalculator;
-import org.traccar.model.Geofence;
+import java.util.List;
 
 public class GeofencePolyline extends GeofenceGeometry {
 
-    private ArrayList<Coordinate> coordinates;
+    private final List<Coordinate> coordinates;
+    private final double polylineDistance;
 
-    public GeofencePolyline() {
-    }
-
-    public GeofencePolyline(String wkt) throws ParseException {
-        fromWkt(wkt);
+    public GeofencePolyline(String wkt, double polylineDistance) throws ParseException {
+        coordinates = fromWkt(wkt);
+        calculateBoundary(coordinates, polylineDistance);
+        this.polylineDistance = polylineDistance;
     }
 
     @Override
-    public boolean containsPoint(Config config, Geofence geofence, double latitude, double longitude) {
-        double distance = geofence.getDouble("polylineDistance");
-        if (distance == 0) {
-            distance = config.getDouble(Keys.GEOFENCE_POLYLINE_DISTANCE);
-        }
+    protected boolean containsPointInternal(double latitude, double longitude) {
         for (int i = 1; i < coordinates.size(); i++) {
             if (DistanceCalculator.distanceToLine(
-                    latitude, longitude, coordinates.get(i - 1).getLat(), coordinates.get(i - 1).getLon(),
-                    coordinates.get(i).getLat(), coordinates.get(i).getLon()) <= distance) {
+                    latitude, longitude, coordinates.get(i - 1).lat(), coordinates.get(i - 1).lon(),
+                    coordinates.get(i).lat(), coordinates.get(i).lon()) <= polylineDistance) {
                 return true;
             }
         }
         return false;
+    }
+
+    @Override
+    protected boolean intersectsSegmentInternal(
+            double latitude1, double longitude1, double latitude2, double longitude2) {
+        return intersectsEdges(coordinates, false, latitude1, longitude1, latitude2, longitude2);
     }
 
     @Override
@@ -61,21 +61,16 @@ public class GeofencePolyline extends GeofenceGeometry {
         StringBuilder buf = new StringBuilder();
         buf.append("LINESTRING (");
         for (Coordinate coordinate : coordinates) {
-            buf.append(coordinate.getLat());
+            buf.append(coordinate.lat());
             buf.append(" ");
-            buf.append(coordinate.getLon());
+            buf.append(coordinate.lon());
             buf.append(", ");
         }
         return buf.substring(0, buf.length() - 2) + ")";
     }
 
-    @Override
-    public void fromWkt(String wkt) throws ParseException {
-        if (coordinates == null) {
-            coordinates = new ArrayList<>();
-        } else {
-            coordinates.clear();
-        }
+    private List<Coordinate> fromWkt(String wkt) throws ParseException {
+        List<Coordinate> coordinates = new ArrayList<>();
 
         if (!wkt.startsWith("LINESTRING")) {
             throw new ParseException("Mismatch geometry type", 0);
@@ -94,20 +89,22 @@ public class GeofencePolyline extends GeofenceGeometry {
             if (tokens.length != 2) {
                 throw new ParseException("Here must be two coordinates: " + commaToken, 0);
             }
-            Coordinate coordinate = new Coordinate();
+            double lat;
             try {
-                coordinate.setLat(Double.parseDouble(tokens[0]));
+                lat = Double.parseDouble(tokens[0]);
             } catch (NumberFormatException e) {
                 throw new ParseException(tokens[0] + " is not a double", 0);
             }
+            double lon;
             try {
-                coordinate.setLon(Double.parseDouble(tokens[1]));
+                lon = Double.parseDouble(tokens[1]);
             } catch (NumberFormatException e) {
                 throw new ParseException(tokens[1] + " is not a double", 0);
             }
-            coordinates.add(coordinate);
+            coordinates.add(new Coordinate(lat, lon));
         }
 
+        return coordinates;
     }
 
 }
